@@ -32,14 +32,24 @@ def process_text(text, mode='train'):
         blank = text[4*i + 3]
         
         # check entries
-        if mode == 'train':
+        '''if mode == 'train':
             assert int(re.match("^\d+", sent)[0]) == (i + 1)
         else:
             assert (int(re.match("^\d+", sent)[0]) - 8000) == (i + 1)
+        '''
+        if mode == 'train':
+            if not re.search("^\d+", sent):
+                print('sentence: ', sent, i, int(len(text)/4))
+            assert re.search("^\d+", sent)
+        else:
+            assert re.search("^\d+", sent)
+        assert re.match("^Comment", comment)
+        assert len(blank) == 1
         assert re.match("^Comment", comment)
         assert len(blank) == 1
         
-        sent = re.findall("\"(.+)\"", sent)[0]
+        #sent = re.findall("\"(.+)\"", sent)[0]
+        sent = re.sub("^\d+\s+","", sent).strip()
         sent = re.sub('<e1>', '[E1]', sent)
         sent = re.sub('</e1>', '[/E1]', sent)
         sent = re.sub('<e2>', '[E2]', sent)
@@ -126,7 +136,7 @@ def get_e1e2_start(x, e1_id, e2_id):
                         [i for i, e in enumerate(x) if e == e2_id][0])
     except Exception as e:
         e1_e2_start = None
-        print(e)
+        #print(e)
     return e1_e2_start
 
 class semeval_dataset(Dataset):
@@ -134,14 +144,18 @@ class semeval_dataset(Dataset):
         self.e1_id = e1_id
         self.e2_id = e2_id
         self.df = df
-        logger.info("Tokenizing data...")
-        self.df['input'] = self.df.progress_apply(lambda x: tokenizer.encode(x['sents']),\
-                                                             axis=1)
-        
-        self.df['e1_e2_start'] = self.df.progress_apply(lambda x: get_e1e2_start(x['input'],\
-                                                       e1_id=self.e1_id, e2_id=self.e2_id), axis=1)
-        print("\nInvalid rows/total: %d/%d" % (df['e1_e2_start'].isnull().sum(), len(df)))
-        self.df.dropna(axis=0, inplace=True)
+        if os.path.exists('tokenized_data.pkl'):
+            self.df = pd.read_pickle('tokenized_data.pkl')
+        else:
+            logger.info("Tokenizing data...")
+            self.df['input'] = self.df.progress_apply(lambda x: tokenizer.encode(x['sents']),\
+                                                                 axis=1)
+            
+            self.df['e1_e2_start'] = self.df.progress_apply(lambda x: get_e1e2_start(x['input'],\
+                                                           e1_id=self.e1_id, e2_id=self.e2_id), axis=1)
+            print("\nInvalid rows/total: %d/%d" % (df['e1_e2_start'].isnull().sum(), len(df)))
+            self.df.dropna(axis=0, inplace=True)
+            self.df.to_pickle('tokenized_data.pkl')
     
     def __len__(self,):
         return len(self.df)

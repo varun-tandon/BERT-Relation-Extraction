@@ -12,17 +12,25 @@ import pandas as pd
 import torch
 import spacy
 import re
+import seaborn as sns
 from itertools import permutations
 from tqdm import tqdm
 from .preprocessing_funcs import load_dataloaders
 from ..misc import save_as_pickle
 
 import logging
+from sklearn.metrics import f1_score
+from sklearn.metrics import precision_score
+from sklearn.metrics import recall_score
+from sklearn.metrics import classification_report, confusion_matrix
+#from scipy.special import comb
 
 tqdm.pandas(desc="prog-bar")
 logging.basicConfig(format='%(asctime)s [%(levelname)s]: %(message)s', \
                     datefmt='%m/%d/%Y %I:%M:%S %p', level=logging.INFO)
 logger = logging.getLogger('__file__')
+
+f= open("predicted_output.txt","w+")
 
 def load_pickle(filename):
     completeName = os.path.join("./data/",\
@@ -205,8 +213,10 @@ class infer_from_trained(object):
             classification_logits = self.net(tokenized, token_type_ids=token_type_ids, attention_mask=attention_mask, Q=None,\
                                         e1_e2_start=e1_e2_start)
             predicted = torch.softmax(classification_logits, dim=1).max(1)[1].item()
-        print("Sentence: ", sentence)
-        print("Predicted: ", self.rm.idx2rel[predicted].strip(), '\n')
+          
+        #print("Sentence: ", sentence)
+        #print("Predicted: ", self.rm.idx2rel[predicted].strip(), '\n')
+      
         return predicted
     
     def infer_sentence(self, sentence, detect_entities=False):
@@ -220,6 +230,48 @@ class infer_from_trained(object):
                 return preds
         else:
             return self.infer_one_sentence(sentence)
+
+    def infer_evaluate(self):
+        test_pkl = open ("data/df_test.pkl", "rb")
+        test_pkl_contents = pickle.load(test_pkl)
+        y_true = test_pkl_contents["relations_id"].tolist()
+        test_sentences = test_pkl_contents["sents"].tolist()
+        logger.info("Total sentences to be tested for inference: " + str(len(test_sentences)))
+        logger.info("Actual Relations Ids length: " + str(len(y_true)))
+
+        y_pred = []
+
+        if test_sentences != None:
+            for sent in test_sentences:
+                pred = self.infer_one_sentence(sent)
+                y_pred.append(pred)
+    
+        logger.info("Predicted Relations Ids length: " + str(len(y_pred))) 
+        logger.info("--------------------------")
+        #print(f1_score(y_true, y_pred, average="macro"))
+        #print(precision_score(y_true, y_pred, average="macro"))
+        #print(recall_score(y_true, y_pred, average="macro"))
+        target_names = ['Meronymy', 'Hypernym', 'Color', 'Material', 'Shape']
+        logger.info(classification_report(y_true, y_pred, target_names=target_names))
+        
+        cf_matrix = confusion_matrix(y_true, y_pred)
+        '''
+        group_names = ['True Neg','False Pos','False Neg','True Pos']
+        group_counts = ["{0:0.0f}".format(value) for value in
+                        cf_matrix.flatten()]
+        group_percentages = ["{0:.2%}".format(value) for value in
+                            cf_matrix.flatten()/np.sum(cf_matrix)]
+        labels = [f"{v1}\n{v2}\n{v3}" for v1, v2, v3 in
+                zip(group_names,group_counts,group_percentages)]
+        labels = np.asarray(labels).reshape(2,2)
+        sns.heatmap(cf_matrix, annot=labels, fmt='', cmap='Blues')
+
+        sns.heatmap(cf_matrix/np.sum(cf_matrix), annot=True, 
+            fmt='.2%', cmap='Blues')
+        '''
+        svm = sns.heatmap(cf_matrix, linewidths=1, annot=True, fmt='.2%', cmap='Blues')
+        heatmap_figure = svm.get_figure()    
+        heatmap_figure.savefig('heatmap_figure.png', dpi=300)
 
 class FewRel(object):
     def __init__(self, args=None):
@@ -237,7 +289,7 @@ class FewRel(object):
             model_name = 'BERT'
             self.net = Model.from_pretrained(model, force_download=False, \
                                              model_size=args.model_size,\
-                                             task='fewrel')
+                                             task='semeval')
         elif self.args.model_no == 1:
             from ..model.ALBERT.modeling_albert import AlbertModel as Model
             from ..model.ALBERT.tokenization_albert import AlbertTokenizer as Tokenizer
@@ -246,7 +298,7 @@ class FewRel(object):
             model_name = 'ALBERT'
             self.net = Model.from_pretrained(model, force_download=False, \
                                              model_size=args.model_size,\
-                                             task='fewrel')
+                                             task='semeval')
         elif args.model_no == 2: # BioBert
             from ..model.BERT.modeling_bert import BertModel, BertConfig
             from ..model.BERT.tokenization_bert import BertTokenizer as Tokenizer
@@ -258,7 +310,7 @@ class FewRel(object):
                                             config=config,
                                             force_download=False, \
                                             model_size='bert-base-uncased',
-                                            task='fewrel')
+                                            task='semeval')
         
         if os.path.isfile('./data/%s_tokenizer.pkl' % model_name):
             self.tokenizer = load_pickle("%s_tokenizer.pkl" % model_name)
@@ -292,13 +344,13 @@ class FewRel(object):
             del checkpoint, pretrained_dict, model_dict
         
         logger.info("Loading Fewrel dataloaders...")
-        self.train_loader, _, self.train_length, _ = load_dataloaders(args)
+        self.train_loader, self.test_loader, self.train_length, _ = load_dataloaders(args)
         
     def evaluate(self):
         counts, hits = 0, 0
         logger.info("Evaluating...")
         with torch.no_grad():
-            for meta_input, e1_e2_start, meta_labels in tqdm(self.train_loader, total=len(self.train_loader)):
+            for meta_input, e1_e2_start, meta_labels in tqdm(self.test_loader, total=len(self.test_loader)):
                 attention_mask = (meta_input != self.pad_id).float()
                 token_type_ids = torch.zeros((meta_input.shape[0], meta_input.shape[1])).long()
         
@@ -315,7 +367,7 @@ class FewRel(object):
                 
                 if closest_idx == meta_labels[-1].item():
                     hits += 1
-                counts += 1
+                counts += 1        
         
         print("Results (%d samples): %.3f %%" % (counts, (hits/counts)*100))
         return meta_input, e1_e2_start, meta_labels, outputs

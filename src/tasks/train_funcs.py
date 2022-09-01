@@ -57,14 +57,13 @@ def load_results(model_no=0):
         losses_per_epoch, accuracy_per_epoch, f1_per_epoch = [], [], []
     return losses_per_epoch, accuracy_per_epoch, f1_per_epoch
 
-
 def evaluate_(output, labels, ignore_idx):
     ### ignore index 0 (padding) when calculating accuracy
     idxs = (labels != ignore_idx).squeeze()
     o_labels = torch.softmax(output, dim=1).max(1)[1]
     l = labels.squeeze()[idxs]; o = o_labels[idxs]
 
-    if len(idxs) > 1:
+    if idxs.dim() > 1:
         acc = (l == o).sum().item()/len(idxs)
     else:
         acc = (l == o).sum().item()
@@ -77,6 +76,8 @@ def evaluate_results(net, test_loader, pad_id, cuda):
     logger.info("Evaluating test samples...")
     acc = 0; out_labels = []; true_labels = []
     net.eval()
+    #f = open("evaluate_results.txt","w+")
+    logger.info("test_loader length: " + str(len(test_loader)))
     with torch.no_grad():
         for i, data in tqdm(enumerate(test_loader), total=len(test_loader)):
             x, e1_e2_start, labels, _,_,_ = data
@@ -88,15 +89,23 @@ def evaluate_results(net, test_loader, pad_id, cuda):
                 labels = labels.cuda()
                 attention_mask = attention_mask.cuda()
                 token_type_ids = token_type_ids.cuda()
-                
+
+            #logger.info("labels length: " + str(len(labels)))   
+            #logger.info("attention_mask length: " + str(len(attention_mask)))   
+            #logger.info("token_type_ids length: " + str(len(token_type_ids)))                    
             classification_logits = net(x, token_type_ids=token_type_ids, attention_mask=attention_mask, Q=None,\
                           e1_e2_start=e1_e2_start)
             
             accuracy, (o, l) = evaluate_(classification_logits, labels, ignore_idx=-1)
+            #logger.info("o length: " + str(len(o)))
+            #logger.info("l length: " + str(len(l)))   
             out_labels.append([str(i) for i in o]); true_labels.append([str(i) for i in l])
             acc += accuracy
+ 
     
     accuracy = acc/(i + 1)
+    logger.info("out_labels length: " + str(len(out_labels)))   
+    logger.info("true_labels length: " + str(len(true_labels)))      
     results = {
         "accuracy": accuracy,
         "precision": precision_score(true_labels, out_labels),
@@ -106,6 +115,14 @@ def evaluate_results(net, test_loader, pad_id, cuda):
     logger.info("***** Eval results *****")
     for key in sorted(results.keys()):
         logger.info("  %s = %s", key, str(results[key]))
-    
+
+    '''logger.info("***** OUT_LABELS *****")
+    for o in out_labels:
+        logger.info(o)        
+
+    logger.info("***** TRUE_LABELS *****")
+    for t in true_labels:
+        logger.info(t)               
+    '''
     return results
     
